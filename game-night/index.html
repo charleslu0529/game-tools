@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Game Night Tools: team maker, random picker, round robin</title>
+<meta name="description" content="Free tools for co-op and party game nights: split friends into random even teams, pick who goes next without repeats, and make a round-robin schedule. No sign-up.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header>
+  <p><a href="../">Game Tools</a></p>
+  <h1>Game Night Tools</h1>
+  <p>Random even teams, a fair “who's next” picker and a round-robin schedule for party and co-op nights. Free, no sign-up, and everything stays in your browser.</p>
+</header>
+<main>
+  <section class="card">
+    <h2><label for="players">Players</label></h2>
+    <p class="muted" id="players-help">One name per line (or separated by commas). Duplicates are ignored. Your list is saved on this device.</p>
+    <textarea id="players" aria-describedby="players-help" placeholder="Ana&#10;Ben&#10;Cy&#10;Dee"></textarea>
+    <p class="muted" id="count" aria-live="polite"></p>
+  </section>
+
+  <section class="card" aria-labelledby="teams-h">
+    <h2 id="teams-h">Make teams</h2>
+    <div class="row">
+      <label for="team-count">Teams</label>
+      <input id="team-count" type="number" min="2" max="16" value="2">
+      <button id="make-teams">Make teams</button>
+      <button id="copy-teams" class="ghost" hidden>Copy</button>
+    </div>
+    <div id="teams" class="grid" aria-live="polite"></div>
+  </section>
+
+  <section class="card" aria-labelledby="pick-h">
+    <h2 id="pick-h">Who's next?</h2>
+    <p class="muted">Picks someone at random, with no repeats until everyone has had a turn. Good for who picks the next game or who goes first.</p>
+    <button id="pick">Pick someone</button>
+    <p class="pick" id="picked" aria-live="polite"></p>
+  </section>
+
+  <section class="card" aria-labelledby="rr-h">
+    <h2 id="rr-h">Round-robin schedule</h2>
+    <p class="muted">Everyone plays everyone once. With an odd number, one sits out each round.</p>
+    <div class="row">
+      <label for="rr-of">Schedule</label>
+      <select id="rr-of"><option value="players">players</option><option value="teams">the teams above</option></select>
+      <button id="make-rr">Make schedule</button>
+      <button id="copy-rr" class="ghost" hidden>Copy</button>
+    </div>
+    <p class="muted" id="rr-msg" aria-live="polite"></p>
+    <div id="rr"></div>
+  </section>
+
+  <section class="card">
+    <h2>Keeping score on stream?</h2>
+    <p>The same maker sells simple OBS overlays for streamers, made for game nights with friends. <a href="https://lucharles.gumroad.com" rel="noopener">See the overlays</a>.</p>
+  </section>
+</main>
+<footer>
+  <p>Fan-made and free. Not affiliated with any game publisher. Questions or ideas: <a href="mailto:lucharles.store@gmail.com">lucharles.store@gmail.com</a></p>
+</footer>
+<script type="module">
+import { parsePlayers, makeTeams, roundRobin, makePicker } from './lib.js';
+
+const $ = id => document.getElementById(id);
+const KEY = 'game-night-players';
+let teams = [];
+const pick = makePicker();
+
+// Storage can be blocked (private windows, strict settings); the page works without it.
+try { $('players').value = localStorage.getItem(KEY) ?? ''; } catch {}
+const players = () => parsePlayers($('players').value);
+function updateCount() {
+  const n = players().length;
+  $('count').textContent = n ? `${n} player${n === 1 ? '' : 's'}` : 'Add at least two players to start.';
+}
+$('players').addEventListener('input', () => {
+  try { localStorage.setItem(KEY, $('players').value); } catch {}
+  updateCount();
+});
+updateCount();
+
+function list(title, names) {
+  const box = document.createElement('div');
+  box.className = 'team';
+  const h = document.createElement('h3'); h.textContent = title;
+  const ul = document.createElement('ul');
+  for (const n of names) { const li = document.createElement('li'); li.textContent = n; ul.append(li); }
+  box.append(h, ul);
+  return box;
+}
+const teamName = i => `Team ${i + 1}`;
+
+$('make-teams').addEventListener('click', () => {
+  const p = players();
+  if (p.length < 2) { $('count').textContent = 'Add at least two players to make teams.'; return; }
+  teams = makeTeams(p, Number($('team-count').value));
+  $('teams').replaceChildren(...teams.map((t, i) => list(teamName(i), t)));
+  $('copy-teams').hidden = false;
+});
+
+$('pick').addEventListener('click', () => {
+  const p = players();
+  $('picked').textContent = p.length ? pick(p) : 'Add some players first.';
+});
+
+let rrText = '';
+$('make-rr').addEventListener('click', () => {
+  const useTeams = $('rr-of').value === 'teams';
+  if (useTeams && !teams.length) { $('rr-msg').textContent = 'Make teams first, or schedule players.'; $('rr').replaceChildren(); return; }
+  const entries = useTeams ? teams.map((_, i) => teamName(i)) : players();
+  if (entries.length < 2) { $('rr-msg').textContent = 'Add at least two players.'; $('rr').replaceChildren(); return; }
+  const rounds = roundRobin(entries);
+  $('rr-msg').textContent = `${rounds.length} rounds`;
+  const lines = [];
+  $('rr').replaceChildren(...rounds.map((round, r) => {
+    const rows = [...round].sort((x, y) => (x[1] === null) - (y[1] === null)) // sit-outs last
+      .map(([a, b]) => b === null ? `${a} sits out` : `${a} vs ${b}`);
+    lines.push(`Round ${r + 1}`, ...rows.map(x => '  ' + x));
+    const el = list(`Round ${r + 1}`, rows);
+    el.className = 'round';
+    return el;
+  }));
+  rrText = lines.join('\n');
+  $('copy-rr').hidden = false;
+});
+
+async function copy(text, button) {
+  try { await navigator.clipboard.writeText(text); button.textContent = 'Copied'; }
+  catch { button.textContent = 'Copy failed'; }
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+}
+$('copy-teams').addEventListener('click', e =>
+  copy(teams.map((t, i) => `${teamName(i)}: ${t.join(', ')}`).join('\n'), e.currentTarget));
+$('copy-rr').addEventListener('click', e => copy(rrText, e.currentTarget));
+</script>
+</body>
+</html>
