@@ -2,4 +2,4 @@
 
 Small, free helpers for playing games with friends: https://charleslu0529.github.io/game-tools/
 
-Static HTML, no build step. Test the logic with `node tests/game-night.test.mjs`.
+Static HTML, no build step. Test the logic with `node tests/game-night.test.mjs && node tests/bracket.test.mjs && node tests/score.test.mjs`.

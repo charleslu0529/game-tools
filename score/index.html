@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Online Score Keeper: free score sheet for game night, no sign-up</title>
+<meta name="description" content="Keep score for board games, card games and party games on your phone. Any number of rounds, live standings with ties, high or low score wins, saved on your device. Free, no sign-up.">
+<link rel="canonical" href="https://charleslu0529.github.io/game-tools/score/">
+<link rel="stylesheet" href="../style.css">
+<style>
+.sheet{overflow-x:auto;margin-top:12px}
+table{border-collapse:collapse;min-width:100%}
+th,td{border:1px solid var(--line);padding:0;text-align:center}
+th{padding:6px 8px;font-size:14px;max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.r{color:var(--muted);font-size:13px;padding:0 8px}
+td input{width:100%;min-width:4.5em;border:0;border-radius:0;background:transparent;text-align:center;padding:8px 4px}
+tfoot td{font-weight:700;padding:8px 4px}
+.lead{color:var(--accent)}
+ol.stand{margin:8px 0 0;padding-left:0;list-style:none}
+ol.stand li{display:flex;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)}
+ol.stand .rk{width:2em;color:var(--muted)}ol.stand .nm{flex:1;overflow-wrap:anywhere}ol.stand .tt{font-weight:700}
+ol.stand li.first .nm,ol.stand li.first .tt{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <p><a href="../">Game Tools</a></p>
+  <h1>Online Score Keeper</h1>
+  <p>A score sheet for board, card and party games that lives on your phone. Add rounds as you go, and the standings update as you type. Free, no sign-up, and saved on this device.</p>
+</header>
+<main>
+  <section class="card" id="setup">
+    <h2><label for="players">Players</label></h2>
+    <p class="muted" id="players-help">One per line (or separated by commas). Duplicates are ignored.</p>
+    <textarea id="players" aria-describedby="players-help" placeholder="Ana&#10;Ben&#10;Cy&#10;Dee"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="start">Start scoring</button>
+    </div>
+    <p class="muted" id="msg" aria-live="polite"></p>
+  </section>
+
+  <section class="card" id="game" hidden aria-labelledby="game-h">
+    <h2 id="game-h">Scores</h2>
+    <div class="row">
+      <label><input type="checkbox" id="low"> Lowest score wins</label>
+    </div>
+    <div class="sheet"><table id="sheet"></table></div>
+    <div class="row" style="margin-top:12px">
+      <button id="add">Add round</button>
+      <button id="drop" class="ghost">Remove last round</button>
+      <button id="copy" class="ghost">Copy standings</button>
+      <button id="new" class="ghost">New game</button>
+    </div>
+    <h3 style="margin:18px 0 0;font-size:16px">Standings</h3>
+    <ol class="stand" id="stand" aria-live="polite"></ol>
+  </section>
+
+  <section class="card">
+    <h2>More game-night tools</h2>
+    <p>Split into <a href="../game-night/">random teams or make a round-robin schedule</a>, or run a knockout with the <a href="../bracket/">tournament bracket maker</a>.</p>
+  </section>
+
+  <section class="card">
+    <h2>Want the scores on your stream?</h2>
+    <p>The same maker sells a simple OBS leaderboard overlay for 2–8 players across rounds, kept right inside OBS. <a href="https://lucharles.gumroad.com/l/gcqmu" rel="noopener">See the scoreboard overlay</a>.</p>
+  </section>
+</main>
+<footer>
+  <p>Fan-made and free. Not affiliated with any game publisher. Questions or ideas: <a href="mailto:lucharles.store@gmail.com">lucharles.store@gmail.com</a></p>
+</footer>
+<script type="module">
+import { parsePlayers } from '../game-night/lib.js';
+import { newGame, setScore, addRound, removeLastRound, totals, standings, validGame, standingsText } from './score.js';
+
+const $ = id => document.getElementById(id);
+const KEY = 'score-keeper';
+let game = null, low = false;
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ game, low })); } catch {} }
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && validGame(s.game)) { game = s.game; low = s.low === true; return true; }
+  } catch {}
+  return false;
+}
+
+function cell(tag, text, cls) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  if (cls) el.className = cls;
+  return el;
+}
+
+function drawSheet() {
+  const head = document.createElement('thead');
+  const hr = document.createElement('tr');
+  hr.append(cell('th', '#'), ...game.players.map(p => { const th = cell('th', p); th.title = p; th.scope = 'col'; return th; }));
+  head.append(hr);
+  const body = document.createElement('tbody');
+  game.rounds.forEach((row, r) => {
+    const tr = document.createElement('tr');
+    tr.append(cell('td', String(r + 1), 'r'));
+    row.forEach((v, p) => {
+      const td = document.createElement('td');
+      const input = document.createElement('input');
+      input.inputMode = 'decimal';
+      input.value = v === 0 ? '' : String(v);
+      input.placeholder = '0';
+      input.setAttribute('aria-label', `${game.players[p]}, round ${r + 1}`);
+      input.addEventListener('input', () => { game = setScore(game, r, p, input.value); save(); drawTotals(); });
+      td.append(input);
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  const foot = document.createElement('tfoot');
+  const fr = document.createElement('tr');
+  fr.id = 'totals';
+  foot.append(fr);
+  $('sheet').replaceChildren(head, body, foot);
+  drawTotals();
+}
+
+function drawTotals() {
+  const t = totals(game);
+  const st = standings(game, low);
+  const leaders = new Set(st.filter(s => s.rank === 1).map(s => s.name));
+  const anyScore = t.some(x => x !== 0);
+  $('totals').replaceChildren(cell('td', 'Total', 'r'),
+    ...t.map((x, i) => cell('td', String(x), anyScore && leaders.has(game.players[i]) ? 'lead' : '')));
+  $('stand').replaceChildren(...st.map(s => {
+    const li = document.createElement('li');
+    if (anyScore && s.rank === 1) li.className = 'first';
+    li.append(cell('span', String(s.rank), 'rk'), cell('span', s.name, 'nm'), cell('span', String(s.total), 'tt'));
+    return li;
+  }));
+}
+
+function show() {
+  $('setup').hidden = true;
+  $('game').hidden = false;
+  $('low').checked = low;
+  drawSheet();
+}
+
+$('start').addEventListener('click', () => {
+  const p = parsePlayers($('players').value);
+  if (p.length < 1) { $('msg').textContent = 'Add at least one player.'; return; }
+  game = newGame(p); save(); show();
+  $('sheet').querySelector('input')?.focus();
+});
+$('low').addEventListener('change', () => { low = $('low').checked; save(); drawTotals(); });
+$('add').addEventListener('click', () => {
+  game = addRound(game); save(); drawSheet();
+  const inputs = $('sheet').querySelectorAll('tbody tr:last-child input');
+  inputs[0]?.focus();
+});
+$('drop').addEventListener('click', () => { game = removeLastRound(game); save(); drawSheet(); });
+
+let confirmNew = null;
+$('new').addEventListener('click', e => {
+  const b = e.currentTarget;
+  if (!confirmNew) { // two clicks, so a stray tap doesn't wipe the scores
+    b.textContent = 'Tap again to clear';
+    confirmNew = setTimeout(() => { b.textContent = 'New game'; confirmNew = null; }, 3000);
+    return;
+  }
+  clearTimeout(confirmNew); confirmNew = null; b.textContent = 'New game';
+  $('players').value = game.players.join('\n');
+  game = null;
+  try { localStorage.removeItem(KEY); } catch {}
+  $('game').hidden = true; $('setup').hidden = false;
+});
+$('copy').addEventListener('click', async e => {
+  const b = e.currentTarget;
+  try { await navigator.clipboard.writeText(standingsText(game, low)); b.textContent = 'Copied'; }
+  catch { b.textContent = 'Copy failed'; }
+  setTimeout(() => { b.textContent = 'Copy standings'; }, 1500);
+});
+
+if (load()) show();
+</script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tournament Bracket Maker: free, printable, no sign-up</title>
+<meta name="description" content="Make a single-elimination tournament bracket for 2 to 64 players or teams. Random or ranked seeding, automatic byes, click to advance winners, then print or copy it. Free, no sign-up.">
+<link rel="canonical" href="https://charleslu0529.github.io/game-tools/bracket/">
+<link rel="stylesheet" href="../style.css">
+<style>
+.bracket{display:flex;gap:18px;overflow-x:auto;padding:6px 2px 12px;margin-top:12px}
+.col{flex:0 0 170px;width:170px;min-width:0;display:flex;flex-direction:column}
+.ms{flex:1;display:flex;flex-direction:column;justify-content:space-around;gap:10px}
+.col h3{font-size:14px;margin:0 0 4px;color:var(--muted);text-align:center}
+.match{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.match button{display:block;width:100%;text-align:left;border:0;border-radius:0;background:transparent;color:var(--fg);font-weight:500;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.match button+button{border-top:1px solid var(--line)}
+.match button.win{background:var(--accent);color:var(--accent-fg)}
+.match button:disabled{cursor:default;color:var(--muted)}
+.match button.win:disabled{color:var(--accent-fg)}
+.champ{font-size:22px;font-weight:700;margin:8px 0 0;overflow-wrap:anywhere}
+@media print{
+  body{background:#fff;color:#000}
+  header p,.no-print,footer{display:none}
+  .card{border:0;padding:0;margin:0}
+  .bracket{overflow:visible;flex-wrap:nowrap}
+  .match button{color:#000;background:#fff}
+  .match button.win{background:#fff;color:#000;font-weight:800;text-decoration:underline}
+}
+</style>
+</head>
+<body>
+<header>
+  <p><a href="../">Game Tools</a></p>
+  <h1>Tournament Bracket Maker</h1>
+  <p>A single-elimination bracket for 2 to 64 players or teams. Byes go to the top seeds, and the top two seeds can only meet in the final. Click a name to send it to the next round. Free, no sign-up, and everything stays in your browser.</p>
+</header>
+<main>
+  <section class="card no-print">
+    <h2><label for="entries">Players or teams</label></h2>
+    <p class="muted" id="entries-help">One per line (or separated by commas). Duplicates are ignored.</p>
+    <textarea id="entries" aria-describedby="entries-help" placeholder="Ana&#10;Ben&#10;Cy&#10;Dee&#10;Eli"></textarea>
+    <div class="row" style="margin-top:10px">
+      <label for="seeding">Seeding</label>
+      <select id="seeding"><option value="random">random</option><option value="listed">as listed (first = top seed)</option></select>
+      <button id="make">Make bracket</button>
+    </div>
+    <p class="muted" id="msg" aria-live="polite"></p>
+  </section>
+
+  <section class="card" id="out" hidden aria-labelledby="out-h">
+    <h2 id="out-h">Bracket</h2>
+    <div class="row no-print">
+      <button id="print" class="ghost">Print</button>
+      <button id="copy" class="ghost">Copy as text</button>
+      <button id="reset" class="ghost">Clear results</button>
+    </div>
+    <div class="bracket" id="bracket"></div>
+    <p class="champ" id="champ" aria-live="polite"></p>
+  </section>
+
+  <section class="card no-print">
+    <h2>Other tools</h2>
+    <p>Everyone plays everyone instead? Use the <a href="../game-night/">round-robin schedule</a>, which can also split your group into random even teams first.</p>
+  </section>
+
+  <section class="card no-print">
+    <h2>Running the tournament on stream?</h2>
+    <p>The same maker sells a simple OBS leaderboard for 2–8 players across rounds, kept right inside OBS, plus printable score sheets and brackets. <a href="https://lucharles.gumroad.com/l/gcqmu" rel="noopener">See the scoreboard overlay</a> or <a href="https://lucharles.gumroad.com" rel="noopener">everything in the store</a>.</p>
+  </section>
+</main>
+<footer>
+  <p>Fan-made and free. Not affiliated with any game publisher. Questions or ideas: <a href="mailto:lucharles.store@gmail.com">lucharles.store@gmail.com</a></p>
+</footer>
+<script type="module">
+import { parsePlayers, shuffle } from '../game-night/lib.js';
+import { buildBracket, cleanPicks, bracketText, roundName } from './bracket.js';
+
+const $ = id => document.getElementById(id);
+const KEY = 'bracket-state';
+let state = null; // { entries: [...seeded], picks: {} }
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} }
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && Array.isArray(s.entries) && s.entries.every(e => typeof e === 'string') && s.picks && typeof s.picks === 'object') {
+      const entries = parsePlayers(s.entries.join('\n'));
+      if (entries.length >= 2) return { entries, picks: cleanPicks(entries, s.picks) };
+    }
+  } catch {}
+  return null;
+}
+
+function nameButton(name, m, key) {
+  const b = document.createElement('button');
+  b.textContent = name ?? (m.bye ? 'bye' : 'TBD');
+  if (name !== null && name === m.winner) b.className = 'win';
+  b.disabled = name === null || m.bye || m.a === null || m.b === null;
+  if (!b.disabled) {
+    b.setAttribute('aria-pressed', String(name === m.winner));
+    b.title = `${name} wins`;
+    b.addEventListener('click', () => {
+      state.picks[key] = name;
+      state.picks = cleanPicks(state.entries, state.picks);
+      save(); render();
+    });
+  }
+  return b;
+}
+
+function render() {
+  const { rounds, champion } = buildBracket(state.entries, state.picks);
+  $('bracket').replaceChildren(...rounds.map((ms, r) => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    const h = document.createElement('h3'); h.textContent = roundName(r, rounds.length);
+    const list = document.createElement('div');
+    list.className = 'ms';
+    col.append(h, list);
+    ms.forEach((m, i) => {
+      const box = document.createElement('div');
+      box.className = 'match';
+      box.append(nameButton(m.a, m, `${r}:${i}`), nameButton(m.b, m, `${r}:${i}`));
+      list.append(box);
+    });
+    return col;
+  }));
+  $('champ').textContent = champion ? `Champion: ${champion}` : '';
+  $('out').hidden = false;
+}
+
+$('make').addEventListener('click', () => {
+  const list = parsePlayers($('entries').value);
+  if (list.length < 2) { $('msg').textContent = 'Add at least two players or teams.'; return; }
+  const entries = $('seeding').value === 'random' ? shuffle(list) : list;
+  state = { entries, picks: {} };
+  const size = buildBracket(entries).rounds[0].length * 2;
+  const byes = size - entries.length;
+  $('msg').textContent = `${entries.length} entries, ${Math.log2(size)} rounds${byes ? `, ${byes} bye${byes === 1 ? '' : 's'}` : ''}.`;
+  save(); render();
+});
+
+$('reset').addEventListener('click', () => { state.picks = {}; save(); render(); });
+$('print').addEventListener('click', () => window.print());
+$('copy').addEventListener('click', async e => {
+  const button = e.currentTarget;
+  try { await navigator.clipboard.writeText(bracketText(state.entries, state.picks)); button.textContent = 'Copied'; }
+  catch { button.textContent = 'Copy failed'; }
+  setTimeout(() => { button.textContent = 'Copy as text'; }, 1500);
+});
+
+state = load();
+if (state) { $('entries').value = state.entries.join('\n'); render(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://charleslu0529.github.io/game-tools/sitemap.xml
